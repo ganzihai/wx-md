@@ -1,0 +1,27 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "wx-md",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-04-15",
+	"observability": {
+		"enabled": true
+	},
+	"ai": {
+		"binding": "AI"
+	},
+	"r2_buckets": [
+		{
+			"binding": "IMAGES_BUCKET",
+			"bucket_name": "wx-md","preview_bucket_name": "wx-md"
+		}
+	],
+	"vars": {
+		// R2 公开访问域名（使用 r2.dev 默认域名）
+		// 如需使用自定义域名，需先配置 DNS 记录
+		"R2_PUBLIC_URL": "https://wc-md.ganzi.fun"
+	}
+}
