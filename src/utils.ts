@@ -91,11 +91,64 @@ export function escapeHtmlAttr(unsafe: string): string {
 }
 
 /**
+ * 标准化微信代码块为 <pre><code> 格式
+ * 微信公众号的代码块有两种常见结构：
+ * 1. <section data-lang="xxx"> 包裹的代码块
+ * 2. <code> 内用 <br> 换行的内联代码块
+ * 统一转换为标准 <pre><code> 结构，让 toMarkdown 能正确识别为多行代码块
+ */
+function normalizeCodeBlocks(html: string): string {
+	// 模式1：微信 <section data-lang="language"> ... </section> 代码块
+	// 提取 lang 属性和内容，转为标准 <pre><code class="language-xxx">
+	html = html.replace(
+		/<section[^>]+data-lang=["']([^"']*)["'][^>]*>([\s\S]*?)<\/section>/gi,
+		(_, lang, content) => {
+			// 去除内部 HTML 标签，保留文本和换行
+			const code = content
+				.replace(/<br\s*\/?>/gi, '\n')
+				.replace(/<[^>]+>/g, '')
+				.replace(/&lt;/g, '<')
+				.replace(/&gt;/g, '>')
+				.replace(/&amp;/g, '&')
+				.replace(/&quot;/g, '"')
+				.replace(/&#39;/g, "'")
+				.trim();
+			const langAttr = lang ? ` class="language-${lang}"` : '';
+			return `<pre><code${langAttr}>${escapeHtml(code)}</code></pre>`;
+		}
+	);
+
+	// 模式2：<code> 内含 <br> 换行的多行代码（微信把换行渲染为 <br>）
+	// 只处理含有 <br> 的 <code> 块，避免干扰正常行内代码
+	html = html.replace(
+		/<code([^>]*)>([\s\S]*?<br[\s\S]*?)<\/code>/gi,
+		(_, attrs, content) => {
+			const code = content
+				.replace(/<br\s*\/?>/gi, '\n')
+				.replace(/<[^>]+>/g, '')
+				.replace(/&lt;/g, '<')
+				.replace(/&gt;/g, '>')
+				.replace(/&amp;/g, '&')
+				.replace(/&quot;/g, '"')
+				.replace(/&#39;/g, "'")
+				.trim();
+			return `<pre><code${attrs}>${escapeHtml(code)}</code></pre>`;
+		}
+	);
+
+	return html;
+}
+
+/**
  * 预处理 HTML 内容
- * 主要处理懒加载图片的 data-src 属性，将其转换为 src 属性
- * 微信公众号文章使用懒加载，图片的真实 URL 存储在 data-src 中
+ * 1. 处理懒加载图片的 data-src 属性，将其转换为 src 属性
+ * 2. 标准化微信代码块为 <pre><code> 格式
  */
 export function preprocessHtml(html: string): string {
+	// 第一步：标准化代码块（在图片处理之前，避免互相干扰）
+	html = normalizeCodeBlocks(html);
+
+	// 第二步：处理懒加载图片
 	return html.replace(/<img\s+([^>]*?)data-src=["']([^"']+)["']([^>]*)>/gi, (match, before, dataSrc, after) => {
 		// 合并前后属性以便检查
 		const otherAttrs = before + after;
