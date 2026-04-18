@@ -3,9 +3,11 @@
  * 将转换后的 Markdown 内容推送到 WordPress 或 Memos
  */
 
+import { marked } from 'marked';
+
 /**
- * 推送 Markdown 内容到 WordPress
- * 使用 Basic Auth（Application Password）
+ * 推送内容到 WordPress
+ * WordPress REST API content 字段需要 HTML，将 Markdown 先转换再推送
  */
 export async function postToWordPress(
 	title: string,
@@ -15,6 +17,9 @@ export async function postToWordPress(
 	if (!env.WP_URL || !env.WP_USER || !env.WP_PASS) {
 		throw new Error('WordPress 配置不完整，请检查 WP_URL、WP_USER、WP_PASS');
 	}
+
+	// 将 Markdown 转换为 HTML
+	const htmlContent = await marked(markdownContent);
 
 	const endpoint = `${env.WP_URL}/wp-json/wp/v2/posts`;
 	const auth = btoa(`${env.WP_USER}:${env.WP_PASS}`);
@@ -32,7 +37,7 @@ export async function postToWordPress(
 		},
 		body: JSON.stringify({
 			title,
-			content: markdownContent,
+			content: htmlContent,
 			status: 'publish',
 			...(categories.length > 0 ? { categories } : {}),
 		}),
@@ -49,7 +54,7 @@ export async function postToWordPress(
 }
 
 /**
- * 推送 Markdown 内容到 Memos
+ * 推送 Markdown 内容到 Memos（原生支持 Markdown，无需转换）
  */
 export async function postToMemos(
 	markdownContent: string,
