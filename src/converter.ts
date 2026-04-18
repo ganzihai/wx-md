@@ -14,7 +14,7 @@ import { replaceImageUrlsSync, uploadImagesToR2Async } from './r2-images';
  * 3. 删除"在小说阅读器读本章 / 去阅读 / 在小说阅读器中沉浸阅读"三行
  * 4. 删除"预览时标签不可点"及之后所有内容
  */
-function cleanMarkdown(content: string): string {
+export function cleanMarkdown(content: string): string {
 	// 1. 删除开头的 YAML front matter
 	content = content.replace(/^---[\s\S]*?---\n*/m, '');
 
@@ -33,6 +33,7 @@ function cleanMarkdown(content: string): string {
 /**
  * 处理网页转换为 Markdown 的核心逻辑
  * 支持 HTML 预览模式和纯 Markdown 模式
+ * 返回 { title, markdown } 供内部调用，或直接返回 Response
  */
 export async function convertWebpageToMarkdown(
 	url: string,
@@ -43,62 +44,7 @@ export async function convertWebpageToMarkdown(
 	download: boolean = false
 ): Promise<Response> {
 	try {
-		console.log(`请求网页内容: ${url}`);
-
-		// 请求网页内容
-		const articleResponse = await fetchWithRetry(url);
-
-		if (!articleResponse.ok) {
-			console.error(`无法获取网页内容，状态码: ${articleResponse.status}`);
-			return new Response(`无法获取网页内容，状态码: ${articleResponse.status}`, {
-				status: 502,
-				headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-			});
-		}
-
-		// 获取原始 HTML 内容
-		const htmlContent = await articleResponse.text();
-
-		// 预处理 HTML 内容，处理懒加载图片
-		const processedHtml = preprocessHtml(htmlContent);
-
-		// 提取文章标题用于文件名
-		const title = getArticleTitle(processedHtml, fallbackTitle);
-
-		// 将 HTML 内容转换为 Markdown
-		console.log('开始转换为 Markdown');
-		const mdResult = await env.AI.toMarkdown([
-			{
-				name: `${title}.html`,
-				blob: new Blob([processedHtml], { type: 'text/html' }),
-			},
-		]);
-
-		if (!mdResult || mdResult.length === 0) {
-			return new Response('Markdown 转换失败', {
-				status: 500,
-				headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-			});
-		}
-
-		// 获取转换后的 Markdown 内容
-		const result = mdResult[0];
-		if (!('data' in result) || !result.data) {
-			return new Response('Markdown 转换失败: 无法获取转换结果', {
-				status: 500,
-				headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-			});
-		}
-		let markdownContent = result.data;
-
-		// 同步替换图片链接为 wsrv.nl 代理链接
-		markdownContent = replaceImageUrlsSync(processedHtml, markdownContent, env);
-
-		// 清理微信文章冗余内容
-		markdownContent = cleanMarkdown(markdownContent);
-
-		// 异步上传图片到 R2（不阻塞响应）
-		ctx.waitUntil(uploadImagesToR2Async(processedHtml, markdownContent, env));
+		const { title, markdown: markdownContent } = await convertToMarkdownContent(url, env, ctx, fallbackTitle);
 
 		// HTML 预览模式
 		if (isHtmlMode) {
@@ -127,6 +73,66 @@ export async function convertWebpageToMarkdown(
 			headers: { 'Content-Type': 'text/plain; charset=utf-8' },
 		});
 	}
+}
+
+/**
+ * 核心转换函数，返回 { title, markdown } 供推送模块复用
+ */
+export async function convertToMarkdownContent(
+	url: string,
+	env: Env,
+	ctx: ExecutionContext,
+	fallbackTitle: string
+): Promise<{ title: string; markdown: string }> {
+	console.log(`请求网页内容: ${url}`);
+
+	// 请求网页内容
+	const articleResponse = await fetchWithRetry(url);
+
+	if (!articleResponse.ok) {
+		console.error(`无法获取网页内容，状态码: ${articleResponse.status}`);
+		throw new Error(`无法获取网页内容，状态码: ${articleResponse.status}`);
+	}
+
+	// 获取原始 HTML 内容
+	const htmlContent = await articleResponse.text();
+
+	// 预处理 HTML 内容，处理懒加载图片
+	const processedHtml = preprocessHtml(htmlContent);
+
+	// 提取文章标题用于文件名
+	const title = getArticleTitle(processedHtml, fallbackTitle);
+
+	// 将 HTML 内容转换为 Markdown
+	console.log('开始转换为 Markdown');
+	const mdResult = await env.AI.toMarkdown([
+		{
+			name: `${title}.html`,
+			blob: new Blob([processedHtml], { type: 'text/html' }),
+		},
+	]);
+
+	if (!mdResult || mdResult.length === 0) {
+		throw new Error('Markdown 转换失败');
+	}
+
+	// 获取转换后的 Markdown 内容
+	const result = mdResult[0];
+	if (!('data' in result) || !result.data) {
+		throw new Error('Markdown 转换失败: 无法获取转换结果');
+	}
+	let markdown = result.data;
+
+	// 同步替换图片链接为 wsrv.nl 代理链接
+	markdown = replaceImageUrlsSync(processedHtml, markdown, env);
+
+	// 清理微信文章冗余内容
+	markdown = cleanMarkdown(markdown);
+
+	// 异步上传图片（当前为空操作）
+	ctx.waitUntil(uploadImagesToR2Async(processedHtml, markdown, env));
+
+	return { title, markdown };
 }
 
 /**
