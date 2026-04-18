@@ -8,6 +8,29 @@ import { generateHtmlWrapper } from './template';
 import { replaceImageUrlsSync, uploadImagesToR2Async } from './r2-images';
 
 /**
+ * 清理微信文章 Markdown 中的冗余内容
+ * 1. 删除开头的 YAML front matter (--- ... ---)
+ * 2. 删除标题后的"原创 作者名 作者名 [作者名](javascript:...)"行
+ * 3. 删除"在小说阅读器读本章 / 去阅读 / 在小说阅读器中沉浸阅读"三行
+ * 4. 删除"预览时标签不可点"及之后所有内容
+ */
+function cleanMarkdown(content: string): string {
+	// 1. 删除开头的 YAML front matter
+	content = content.replace(/^---[\s\S]*?---\n*/m, '');
+
+	// 2. 删除"原创 作者 作者 [作者](javascript:...)"这一行
+	content = content.replace(/^原创\s+.+\[.+\]\(javascript:[^\)]*\)\s*\n/m, '');
+
+	// 3. 删除小说阅读器三行固定噪音
+	content = content.replace(/在小说阅读器读本章\s*\n\s*去阅读\s*\n\s*在小说阅读器中沉浸阅读\s*\n*/m, '');
+
+	// 4. 从"预览时标签不可点"开始删除到末尾
+	content = content.replace(/预览时标签不可点[\s\S]*$/m, '');
+
+	return content.trim();
+}
+
+/**
  * 处理网页转换为 Markdown 的核心逻辑
  * 支持 HTML 预览模式和纯 Markdown 模式
  */
@@ -68,8 +91,11 @@ export async function convertWebpageToMarkdown(
 		}
 		let markdownContent = result.data;
 
-		// 同步替换图片链接为 R2 链接（不等待上传）
+		// 同步替换图片链接为 wsrv.nl 代理链接
 		markdownContent = replaceImageUrlsSync(processedHtml, markdownContent, env);
+
+		// 清理微信文章冗余内容
+		markdownContent = cleanMarkdown(markdownContent);
 
 		// 异步上传图片到 R2（不阻塞响应）
 		ctx.waitUntil(uploadImagesToR2Async(processedHtml, markdownContent, env));
