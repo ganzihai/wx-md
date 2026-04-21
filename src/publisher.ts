@@ -16,8 +16,36 @@ function toBase64(str: string): string {
 }
 
 /**
+ * 获取北京时间各字段
+ * 北京时间 = UTC+8
+ */
+function getBeijingTimeParts(now: Date): {
+	dateStr: string;       // 2026-04-21
+	timeStr: string;       // 1338
+	dateTimeISO: string;   // 2026-04-21T13:38:00+08:00
+} {
+	// UTC 毫秒 + 8小时偏移
+	const bjOffset = 8 * 60 * 60 * 1000;
+	const bjTime = new Date(now.getTime() + bjOffset);
+
+	const Y = bjTime.getUTCFullYear();
+	const M = String(bjTime.getUTCMonth() + 1).padStart(2, '0');
+	const D = String(bjTime.getUTCDate()).padStart(2, '0');
+	const H = String(bjTime.getUTCHours()).padStart(2, '0');
+	const m = String(bjTime.getUTCMinutes()).padStart(2, '0');
+	const S = String(bjTime.getUTCSeconds()).padStart(2, '0');
+
+	return {
+		dateStr: `${Y}-${M}-${D}`,
+		timeStr: `${H}${m}`,
+		dateTimeISO: `${Y}-${M}-${D}T${H}:${m}:${S}+08:00`,
+	};
+}
+
+/**
  * 推送内容到 Hugo（通过 GitHub API 提交 .md 文件到 blog 仓库）
- * 文件命名规则：YYYY-MM-DD-序号.md，与现有文章一致
+ * 文件命名规则：YYYY-MM-DD-HHmm.md（北京时间，精确到分钟）
+ * 例如：2026-04-21-1338.md
  */
 export async function postToHugo(
 	title: string,
@@ -28,9 +56,11 @@ export async function postToHugo(
 		throw new Error('Hugo 配置不完整，请检查 GITHUB_TOKEN、HUGO_REPO');
 	}
 
-	const now = new Date();
-	const dateStr = now.toISOString().slice(0, 10); // YYYY-MM-DD
-	const dateTimeStr = now.toISOString().replace('Z', '+00:00');
+	const { dateStr, timeStr, dateTimeISO } = getBeijingTimeParts(new Date());
+
+	const filename = `${dateStr}-${timeStr}.md`;
+	const filepath = `content/post/${filename}`;
+	const urlSlug = `/${dateStr}-${timeStr}.html`;
 
 	const [owner, repo] = env.HUGO_REPO.split('/');
 	const apiBase = `https://api.github.com/repos/${owner}/${repo}`;
@@ -41,27 +71,17 @@ export async function postToHugo(
 		'Content-Type': 'application/json',
 	};
 
-	// 查询当天已有几篇文章，序号+1
-	const listResp = await fetch(`${apiBase}/contents/content/post`, { headers: githubHeaders });
-	if (!listResp.ok) {
-		const err = await listResp.text();
-		throw new Error(`获取文章列表失败 (${listResp.status}): ${err.slice(0, 300)}`);
-	}
-	const files = await listResp.json() as { name: string }[];
-	const todayCount = Array.isArray(files) ? files.filter((f) => f.name.startsWith(dateStr)).length : 0;
-	const seq = String(todayCount + 1).padStart(2, '0');
-	const filename = `${dateStr}-${seq}.md`;
-	const filepath = `content/post/${filename}`;
-
-	// 拼接 Hugo frontmatter（与现有文章格式一致）
+	// 拼接 Hugo frontmatter
 	const safeTitle = title.replace(/"/g, '\\"');
 	const frontmatter = [
 		'---',
 		`title: ${safeTitle}`,
 		'author: 杆子',
 		'type: post',
-		`date: ${dateTimeStr}`,
-		`url: /${filename.replace('.md', '.html')}`,
+		`date: ${dateTimeISO}`,
+		`url: ${urlSlug}`,
+		'views:',
+		'  - 1',
 		'categories:',
 		'  - 转载',
 		'---',
@@ -71,7 +91,7 @@ export async function postToHugo(
 
 	const fileContent = frontmatter + markdownContent;
 
-	// 提交文件到 GitHub（使用 TextEncoder 保证 UTF-8 正确编码）
+	// 提交文件到 GitHub
 	const uploadResp = await fetch(`${apiBase}/contents/${filepath}`, {
 		method: 'PUT',
 		headers: githubHeaders,
