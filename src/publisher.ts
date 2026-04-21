@@ -4,6 +4,18 @@
  */
 
 /**
+ * 将字符串编码为 base64（支持中文/UTF-8）
+ */
+function toBase64(str: string): string {
+	const bytes = new TextEncoder().encode(str);
+	let binary = '';
+	for (const b of bytes) {
+		binary += String.fromCharCode(b);
+	}
+	return btoa(binary);
+}
+
+/**
  * 推送内容到 Hugo（通过 GitHub API 提交 .md 文件到 blog 仓库）
  * 文件命名规则：YYYY-MM-DD-序号.md，与现有文章一致
  */
@@ -31,6 +43,10 @@ export async function postToHugo(
 
 	// 查询当天已有几篇文章，序号+1
 	const listResp = await fetch(`${apiBase}/contents/content/post`, { headers: githubHeaders });
+	if (!listResp.ok) {
+		const err = await listResp.text();
+		throw new Error(`获取文章列表失败 (${listResp.status}): ${err.slice(0, 300)}`);
+	}
 	const files = await listResp.json() as { name: string }[];
 	const todayCount = Array.isArray(files) ? files.filter((f) => f.name.startsWith(dateStr)).length : 0;
 	const seq = String(todayCount + 1).padStart(2, '0');
@@ -39,27 +55,29 @@ export async function postToHugo(
 
 	// 拼接 Hugo frontmatter（与现有文章格式一致）
 	const safeTitle = title.replace(/"/g, '\\"');
-	const frontmatter = `---
-title: ${safeTitle}
-author: 杆子
-type: post
-date: ${dateTimeStr}
-url: /${filename.replace('.md', '.html')}
-categories:
-  - 转载
----\n\n`;
+	const frontmatter = [
+		'---',
+		`title: ${safeTitle}`,
+		'author: 杆子',
+		'type: post',
+		`date: ${dateTimeStr}`,
+		`url: /${filename.replace('.md', '.html')}`,
+		'categories:',
+		'  - 转载',
+		'---',
+		'',
+		'',
+	].join('\n');
 
 	const fileContent = frontmatter + markdownContent;
-	// btoa 不支持中文，需先 encodeURIComponent + unescape
-	const encoded = btoa(unescape(encodeURIComponent(fileContent)));
 
-	// 提交文件到 GitHub
+	// 提交文件到 GitHub（使用 TextEncoder 保证 UTF-8 正确编码）
 	const uploadResp = await fetch(`${apiBase}/contents/${filepath}`, {
 		method: 'PUT',
 		headers: githubHeaders,
 		body: JSON.stringify({
 			message: `feat: 新增文章 ${filename}`,
-			content: encoded,
+			content: toBase64(fileContent),
 		}),
 	});
 
