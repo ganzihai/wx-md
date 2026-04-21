@@ -16,10 +16,8 @@
 	"vars": {
 		// R2 公开访问域名
 		"R2_PUBLIC_URL": "https://wc-md.ganzi.fun",
-		// WordPress 配置（密码通过 wrangler secret put WP_PASS 设置）
-		"WP_URL": "https://blogv.zznuo.com",
-		"WP_USER": "ganzi",
-		"WP_CATEGORIES": "47",
+		// Hugo 配置（GITHUB_TOKEN 通过 wrangler secret put GITHUB_TOKEN 设置）
+		"HUGO_REPO": "ganzihai/blog",
 		// Memos 配置（API Key 通过 wrangler secret put MEMOS_API_KEY 设置）
 		"MEMOS_API_URL": "https://n.ganzi.fun"
 	}

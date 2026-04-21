@@ -8,13 +8,13 @@
  * - /html/s/{article_id} 微信文章 HTML 预览
  * - /md?url=...          通用网页转 Markdown
  * - /html/md?url=...     通用网页 HTML 预览
- * - POST /push/wp        微信文章转换后推送到 WordPress
+ * - POST /push/hugo      微信文章转换后推送到 Hugo
  * - POST /push/memos     微信文章转换后推送到 Memos
  */
 
 import INDEX_HTML from '../index.html';
 import { convertWebpageToMarkdown, convertToMarkdownContent, handleGenericWebpage } from './converter';
-import { postToWordPress, postToMemos } from './publisher';
+import { postToHugo, postToMemos } from './publisher';
 
 /** 微信公众号文章 URL 前缀 */
 const WECHAT_URL_PREFIX = 'https://mp.weixin.qq.com/';
@@ -55,7 +55,7 @@ async function handlePush(
 	url: URL,
 	env: Env,
 	ctx: ExecutionContext,
-	target: 'wp' | 'memos'
+	target: 'hugo' | 'memos'
 ): Promise<Response> {
 	const wechatUrl = await resolveWechatUrl(request, url);
 
@@ -76,10 +76,10 @@ async function handlePush(
 		// 复用核心转换逻辑
 		const { title, markdown } = await convertToMarkdownContent(wechatUrl, env, ctx, fallbackId);
 
-		if (target === 'wp') {
-			const result = await postToWordPress(title, markdown, env);
+		if (target === 'hugo') {
+			const result = await postToHugo(title, markdown, env);
 			return new Response(
-				JSON.stringify({ success: true, target: 'wordpress', title, id: result.id, link: result.link }),
+				JSON.stringify({ success: true, target: 'hugo', title, path: result.path, url: result.url }),
 				{ headers: { 'Content-Type': 'application/json' } }
 			);
 		} else {
@@ -130,9 +130,9 @@ export default {
 				});
 			}
 
-			// 推送到 WordPress
-			if (path === '/push/wp') {
-				return await handlePush(request, url, env, ctx, 'wp');
+			// 推送到 Hugo
+			if (path === '/push/hugo') {
+				return await handlePush(request, url, env, ctx, 'hugo');
 			}
 
 			// 推送到 Memos

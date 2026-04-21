@@ -1,56 +1,78 @@
 /**
  * 推送模块
- * 将转换后的 Markdown 内容推送到 WordPress 或 Memos
+ * 将转换后的 Markdown 内容推送到 Hugo 或 Memos
  */
-
-import { marked } from 'marked';
 
 /**
- * 推送内容到 WordPress
- * WordPress REST API content 字段需要 HTML，将 Markdown 先转换再推送
+ * 推送内容到 Hugo（通过 GitHub API 提交 .md 文件到 blog 仓库）
+ * 文件命名规则：YYYY-MM-DD-序号.md，与现有文章一致
  */
-export async function postToWordPress(
+export async function postToHugo(
 	title: string,
 	markdownContent: string,
 	env: Env
-): Promise<{ id: number; link: string }> {
-	if (!env.WP_URL || !env.WP_USER || !env.WP_PASS) {
-		throw new Error('WordPress 配置不完整，请检查 WP_URL、WP_USER、WP_PASS');
+): Promise<{ path: string; url: string }> {
+	if (!env.GITHUB_TOKEN || !env.HUGO_REPO) {
+		throw new Error('Hugo 配置不完整，请检查 GITHUB_TOKEN、HUGO_REPO');
 	}
 
-	// 将 Markdown 转换为 HTML
-	const htmlContent = await marked(markdownContent);
+	const now = new Date();
+	const dateStr = now.toISOString().slice(0, 10); // YYYY-MM-DD
+	const dateTimeStr = now.toISOString().replace('Z', '+00:00');
 
-	const endpoint = `${env.WP_URL}/wp-json/wp/v2/posts`;
-	const auth = btoa(`${env.WP_USER}:${env.WP_PASS}`);
-	const categories = env.WP_CATEGORIES
-		? env.WP_CATEGORIES.split(',').map((c: string) => parseInt(c.trim())).filter((n: number) => !isNaN(n))
-		: [];
+	const [owner, repo] = env.HUGO_REPO.split('/');
+	const apiBase = `https://api.github.com/repos/${owner}/${repo}`;
+	const githubHeaders = {
+		Authorization: `token ${env.GITHUB_TOKEN}`,
+		'User-Agent': 'wx-md-worker',
+		Accept: 'application/vnd.github.v3+json',
+		'Content-Type': 'application/json',
+	};
 
-	console.log(`推送到 WordPress: ${endpoint}`);
+	// 查询当天已有几篇文章，序号+1
+	const listResp = await fetch(`${apiBase}/contents/content/post`, { headers: githubHeaders });
+	const files = await listResp.json() as { name: string }[];
+	const todayCount = Array.isArray(files) ? files.filter((f) => f.name.startsWith(dateStr)).length : 0;
+	const seq = String(todayCount + 1).padStart(2, '0');
+	const filename = `${dateStr}-${seq}.md`;
+	const filepath = `content/post/${filename}`;
 
-	const response = await fetch(endpoint, {
-		method: 'POST',
-		headers: {
-			'Authorization': `Basic ${auth}`,
-			'Content-Type': 'application/json',
-		},
+	// 拼接 Hugo frontmatter（与现有文章格式一致）
+	const safeTitle = title.replace(/"/g, '\\"');
+	const frontmatter = `---
+title: ${safeTitle}
+author: 杆子
+type: post
+date: ${dateTimeStr}
+url: /${filename.replace('.md', '.html')}
+categories:
+  - 转载
+---\n\n`;
+
+	const fileContent = frontmatter + markdownContent;
+	// btoa 不支持中文，需先 encodeURIComponent + unescape
+	const encoded = btoa(unescape(encodeURIComponent(fileContent)));
+
+	// 提交文件到 GitHub
+	const uploadResp = await fetch(`${apiBase}/contents/${filepath}`, {
+		method: 'PUT',
+		headers: githubHeaders,
 		body: JSON.stringify({
-			title,
-			content: htmlContent,
-			status: 'publish',
-			...(categories.length > 0 ? { categories } : {}),
+			message: `feat: 新增文章 ${filename}`,
+			content: encoded,
 		}),
 	});
 
-	if (!response.ok) {
-		const err = await response.text();
-		throw new Error(`WordPress 发布失败 (${response.status}): ${err.slice(0, 300)}`);
+	if (!uploadResp.ok) {
+		const err = await uploadResp.text();
+		throw new Error(`Hugo 发布失败 (${uploadResp.status}): ${err.slice(0, 300)}`);
 	}
 
-	const result = await response.json() as { id: number; link: string };
-	console.log(`WordPress 发布成功，ID: ${result.id}，链接: ${result.link}`);
-	return result;
+	console.log(`Hugo 发布成功：${filepath}`);
+	return {
+		path: filepath,
+		url: `https://github.com/${owner}/${repo}/blob/main/${filepath}`,
+	};
 }
 
 /**
