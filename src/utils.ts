@@ -83,43 +83,72 @@ export function escapeHtmlAttr(unsafe: string): string {
 }
 
 /**
+ * 统一提取代码块内文本：
+ * - 把 <br> / <br/> 换成换行
+ * - 剥掉所有 HTML 标签
+ * - 解码常见 HTML 实体
+ */
+function extractCodeText(raw: string): string {
+	return raw
+		.replace(/<br\s*\/?>/gi, '\n')
+		.replace(/<[^>]+>/g, '')
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>')
+		.replace(/&amp;/g, '&')
+		.replace(/&quot;/g, '"')
+		.replace(/&#39;/g, "'")
+		.replace(/&nbsp;/g, ' ')
+		.trim();
+}
+
+/**
  * 标准化微信代码块为 <pre><code> 格式
- * 处理两种微信常见的代码块结构，让 toMarkdown 能正确识别为多行代码块
+ * 处理四种微信/通用常见的代码块结构，让 toMarkdown 能正确识别为多行代码块
+ *
+ * 处理顺序（从高优先级到低）：
+ *  1. <section data-lang="...">  微信专用代码块（带语言）
+ *  2. <pre> 裸标签 / <pre class="...">  通用预格式化文本
+ *  3. <code> 内含 <br> 换行（微信把多行代码渲染成 <br> 分隔）
+ *  4. 不含换行的单行 <code> 保持不变（行内代码，不处理）
  */
 function normalizeCodeBlocks(html: string): string {
 	// 模式1：微信 <section data-lang="language"> ... </section> 代码块
 	html = html.replace(
 		/<section[^>]+data-lang=["']([^"']*)["'][^>]*>([\s\S]*?)<\/section>/gi,
 		(_, lang, content) => {
-			const code = content
-				.replace(/<br\s*\/?>/gi, '\n')
-				.replace(/<[^>]+>/g, '')
-				.replace(/&lt;/g, '<')
-				.replace(/&gt;/g, '>')
-				.replace(/&amp;/g, '&')
-				.replace(/&quot;/g, '"')
-				.replace(/&#39;/g, "'")
-				.trim();
+			const code = extractCodeText(content);
 			const langAttr = lang ? ` class="language-${lang}"` : '';
-			// 直接输出原始文本，不做二次 escapeHtml，避免推送 WordPress 时双重转义
 			return `<pre><code${langAttr}>${code}</code></pre>`;
 		}
 	);
 
-	// 模式2：<code> 内含 <br> 换行的多行代码（微信把换行渲染为 <br>）
+	// 模式2：<pre> 标签（含或不含 class），内部可能有 <code> 或裸文本
+	// 统一规整为 <pre><code class="language-xxx">...</code></pre>
+	html = html.replace(
+		/<pre([^>]*)>([\s\S]*?)<\/pre>/gi,
+		(_, attrs, content) => {
+			// 从已有 class / data-lang 里尝试提取语言
+			const langMatch = attrs.match(/(?:class|data-lang)=["'][^"']*?(?:language-)?([a-zA-Z0-9+#\-]+)["']/i);
+			const lang = langMatch ? langMatch[1] : '';
+			const langAttr = lang ? ` class="language-${lang}"` : '';
+
+			// 如果内部已经有 <code>，直接提取文本；否则视为裸文本
+			const hasCode = /<code[\s>]/i.test(content);
+			const code = hasCode
+				? content.replace(/<\/?code[^>]*>/gi, (m: string) => extractCodeText(m))  // 剥掉 <code> 包装再提取
+				: extractCodeText(content);
+
+			// 重新用 extractCodeText 清理一遍（处理嵌套标签残留）
+			const cleanCode = extractCodeText(hasCode ? content : `<x>${code}</x>`);
+			return `<pre><code${langAttr}>${cleanCode}</code></pre>`;
+		}
+	);
+
+	// 模式3：<code> 内含 <br> 换行的多行代码（微信把换行渲染为 <br>，但未包在 <pre> 里）
 	html = html.replace(
 		/<code([^>]*)>([\s\S]*?<br[\s\S]*?)<\/code>/gi,
 		(_, attrs, content) => {
-			const code = content
-				.replace(/<br\s*\/?>/gi, '\n')
-				.replace(/<[^>]+>/g, '')
-				.replace(/&lt;/g, '<')
-				.replace(/&gt;/g, '>')
-				.replace(/&amp;/g, '&')
-				.replace(/&quot;/g, '"')
-				.replace(/&#39;/g, "'")
-				.trim();
-			// 直接输出原始文本，不做二次 escapeHtml
+			const code = extractCodeText(content);
 			return `<pre><code${attrs}>${code}</code></pre>`;
 		}
 	);
