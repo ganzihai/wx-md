@@ -83,7 +83,7 @@ export async function postToHugo(
 		'views:',
 		'  - 1',
 		'categories:',
-		'  - 转载',
+		'  - 教程',
 		'---',
 		'',
 		'',
