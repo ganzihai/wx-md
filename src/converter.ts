@@ -27,6 +27,9 @@ export function cleanMarkdown(content: string): string {
 	// 4. 从"预览时标签不可点"开始删除到末尾
 	content = content.replace(/预览时标签不可点[\s\S]*$/m, '');
 
+	// 5. 删除正文开头的 # 标题行（避免与 front matter title 重复）
+	content = content.replace(/^#\s+.+\n*/, '');
+
 	return content.trim();
 }
 
