@@ -13,8 +13,9 @@ import { replaceImageUrlsSync, uploadImagesToR2Async } from './r2-images';
  * 2. 删除标题后的"原创 作者名 作者名 [作者名](javascript:...)"行
  * 3. 删除"在小说阅读器读本章 / 去阅读 / 在小说阅读器中沉浸阅读"三行
  * 4. 删除"预览时标签不可点"及之后所有内容
+ * 5. 删除正文开头的 Markdown 标题行（避免与 Hugo front matter title 重复）
  */
-export function cleanMarkdown(content: string): string {
+export function cleanMarkdown(content: string, expectedTitle?: string): string {
 	// 1. 删除开头的 YAML front matter
 	content = content.replace(/^---[\s\S]*?---\n*/m, '');
 
@@ -27,8 +28,15 @@ export function cleanMarkdown(content: string): string {
 	// 4. 从"预览时标签不可点"开始删除到末尾
 	content = content.replace(/预览时标签不可点[\s\S]*$/m, '');
 
-	// 5. 删除正文开头的 # 标题行（避免与 front matter title 重复）
-	content = content.replace(/^#\s+.+\n*/, '');
+	// 5. 删除正文开头的 Markdown 标题行（1-6 级），避免与 Hugo front matter title 重复
+	// 先尝试删除空行，然后删除标题行
+	content = content.replace(/^\s*#{1,6}\s+.+\n+/, '');
+
+	// 6. 如果提供了预期标题，删除任何包含该标题的标题行（更精确匹配）
+	if (expectedTitle) {
+		const escapedTitle = expectedTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		content = content.replace(new RegExp(`^\\s*#{1,6}\\s*${escapedTitle}\\s*\n`, 'm'), '');
+	}
 
 	return content.trim();
 }
@@ -130,7 +138,7 @@ export async function convertToMarkdownContent(
 	markdown = replaceImageUrlsSync(processedHtml, markdown, env);
 
 	// 清理微信文章冗余内容
-	markdown = cleanMarkdown(markdown);
+	markdown = cleanMarkdown(markdown, title);
 
 	// 异步上传图片（当前为空操作）
 	ctx.waitUntil(uploadImagesToR2Async(processedHtml, markdown, env));
