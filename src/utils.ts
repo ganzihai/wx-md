@@ -36,6 +36,19 @@ export async function fetchWithRetry(url: string, retries = 3, delay = 1000, cus
 }
 
 /**
+ * 解码常见 HTML 实体
+ */
+export function decodeHtmlEntities(str: string): string {
+	return str
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>')
+		.replace(/&amp;/g, '&')
+		.replace(/&quot;/g, '"')
+		.replace(/&#39;/g, "'")
+		.replace(/&nbsp;/g, ' ');
+}
+
+/**
  * 从 HTML 内容中提取文章标题
  */
 export function getArticleTitle(html: string, fallbackId: string): string {
@@ -54,6 +67,18 @@ export function getArticleTitle(html: string, fallbackId: string): string {
 		title = `wechat-article-${fallbackId}`;
 	}
 
+	// 解码 HTML 实体，并进行基础清洗
+	return decodeHtmlEntities(title)
+		.replace(/[\r\n]+/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.substring(0, 200);
+}
+
+/**
+ * 将标题转换为安全的文件名
+ */
+export function sanitizeFilename(title: string): string {
 	return title
 		.replace(/\s+/g, '_')
 		.replace(/[\\/:*?"<>|]/g, '')
@@ -89,16 +114,10 @@ export function escapeHtmlAttr(unsafe: string): string {
  * - 解码常见 HTML 实体
  */
 function extractCodeText(raw: string): string {
-	return raw
+	const text = raw
 		.replace(/<br\s*\/?>/gi, '\n')
-		.replace(/<[^>]+>/g, '')
-		.replace(/&lt;/g, '<')
-		.replace(/&gt;/g, '>')
-		.replace(/&amp;/g, '&')
-		.replace(/&quot;/g, '"')
-		.replace(/&#39;/g, "'")
-		.replace(/&nbsp;/g, ' ')
-		.trim();
+		.replace(/<[^>]+>/g, '');
+	return decodeHtmlEntities(text).trim();
 }
 
 /**

@@ -3,7 +3,7 @@
  * 处理网页到 Markdown 的转换，包括微信公众号文章和通用网页
  */
 
-import { fetchWithRetry, getArticleTitle, preprocessHtml } from './utils';
+import { fetchWithRetry, getArticleTitle, preprocessHtml, sanitizeFilename } from './utils';
 import { generateHtmlWrapper } from './template';
 import { replaceImageUrlsSync, uploadImagesToR2Async } from './r2-images';
 
@@ -29,13 +29,15 @@ export function cleanMarkdown(content: string, expectedTitle?: string): string {
 	content = content.replace(/预览时标签不可点[\s\S]*$/m, '');
 
 	// 5. 删除正文开头的 Markdown 标题行（1-6 级），避免与 Hugo front matter title 重复
-	// 先尝试删除空行，然后删除标题行
-	content = content.replace(/^\s*#{1,6}\s+.+\n+/, '');
+	// 允许标题前有空行，使用多行模式匹配
+	content = content.replace(/^(\s*\n)*\s*#{1,6}\s+.+\n+/, '');
 
 	// 6. 如果提供了预期标题，删除任何包含该标题的标题行（更精确匹配）
 	if (expectedTitle) {
 		const escapedTitle = expectedTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-		content = content.replace(new RegExp(`^\\s*#{1,6}\\s*${escapedTitle}\\s*\n`, 'm'), '');
+		// 允许标题前后有空格，匹配 1-6 级标题
+		const titleRegex = new RegExp(`^\\s*#{1,6}\\s*${escapedTitle}\\s*(\\n|$)`, 'm');
+		content = content.replace(titleRegex, '');
 	}
 
 	return content.trim();
@@ -72,7 +74,8 @@ export async function convertWebpageToMarkdown(
 		};
 
 		if (download) {
-			headers['Content-Disposition'] = `attachment; filename="${title}.md"`;
+			const safeFileName = sanitizeFilename(title);
+			headers['Content-Disposition'] = `attachment; filename="${safeFileName}.md"`;
 		}
 
 		return new Response(markdownContent, { headers });
