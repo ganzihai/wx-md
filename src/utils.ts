@@ -177,10 +177,15 @@ function normalizeCodeBlocks(html: string): string {
 
 /**
  * 预处理 HTML 内容
- * 1. 标准化微信代码块为 <pre><code> 格式
- * 2. 处理懒加载图片的 data-src 属性，将其转换为 src 属性
+ * 1. 移除微信封面图区域，避免重复
+ * 2. 标准化微信代码块为 <pre><code> 格式
+ * 3. 处理懒加载图片的 data-src 属性，将其转换为 src 属性
  */
 export function preprocessHtml(html: string): string {
+	// 移除微信文章封面图区域（避免转换后在 Markdown 开头出现重复图片）
+	// 微信封面图通常在 id="js_cover_area" 的 div 中
+	html = html.replace(/<div[^>]+id=["']js_cover_area["'][^>]*>[\s\S]*?<\/div>/gi, '');
+
 	// 第一步：标准化代码块
 	html = normalizeCodeBlocks(html);
 
