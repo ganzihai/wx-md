@@ -12,8 +12,9 @@ import { replaceImageUrlsSync, uploadImagesToR2Async } from './r2-images';
  * 大部分噪音已在 HTML 层面通过 linkedom 清理，此处仅做最终微调：
  * 1. 删除开头的 YAML front matter (--- ... ---)
  * 2. 删除正文开头的 Markdown 标题行（兜底，避免与 Hugo front matter title 重复）
- * 3. 模糊匹配预期标题，删除任何匹配的标题行
- * 4. 删除"预览时标签不可点"及之后所有内容
+ * 3. 删除 AI 转换产生的"小说阅读器"幻觉三行
+ * 4. 模糊匹配预期标题，删除任何匹配的标题行
+ * 5. 删除"预览时标签不可点"及之后所有内容
  */
 export function cleanMarkdown(content: string, expectedTitle?: string): string {
 	// 1. 删除开头的 YAML front matter
@@ -22,7 +23,10 @@ export function cleanMarkdown(content: string, expectedTitle?: string): string {
 	// 2. 删除正文开头的 Markdown 标题行（支持 \r\n，兜底）
 	content = content.replace(/^[\s\n\r]*#{1,6}\s+.+[\r\n]+/, '');
 
-	// 3. 模糊匹配预期标题（比精确匹配更鲁棒）
+	// 3. 删除 AI 幻觉——小说阅读器三行噪音（非原文章内容，AI 转换时产生）
+	content = content.replace(/在小说阅读器读本章[\s\n\r]*去阅读[\s\n\r]*在小说阅读器中沉浸阅读[\s\n\r]*/m, '');
+
+	// 4. 模糊匹配预期标题（比精确匹配更鲁棒）
 	if (expectedTitle) {
 		const normTitle = expectedTitle.replace(/\s+/g, '').substring(0, 30);
 		const titleRegex = /^#{1,6}\s+(.+)[\r\n]+/gm;
@@ -33,7 +37,7 @@ export function cleanMarkdown(content: string, expectedTitle?: string): string {
 		});
 	}
 
-	// 4. 从"预览时标签不可点"开始删除到末尾（最后兜底）
+	// 5. 从"预览时标签不可点"开始删除到末尾（最后兜底）
 	content = content.replace(/预览时标签不可点[\s\S]*$/m, '');
 
 	return content.trim();
