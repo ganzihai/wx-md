@@ -3,6 +3,8 @@
  * 包含 HTTP 请求、HTML 处理、标题提取等通用功能
  */
 
+import { cleanArticleHtml } from './cleaner';
+
 /**
  * 带重试功能的 fetch 请求
  * 支持自定义 Referer 和错误重试
@@ -108,86 +110,13 @@ export function escapeHtmlAttr(unsafe: string): string {
 }
 
 /**
- * 统一提取代码块内文本：
- * - 把 <br> / <br/> 换成换行
- * - 剥掉所有 HTML 标签
- * - 解码常见 HTML 实体
- */
-function extractCodeText(raw: string): string {
-	const text = raw
-		.replace(/<br\s*\/?>/gi, '\n')
-		.replace(/<[^>]+>/g, '');
-	return decodeHtmlEntities(text).trim();
-}
-
-/**
- * 标准化微信代码块为 <pre><code> 格式
- * 处理四种微信/通用常见的代码块结构，让 toMarkdown 能正确识别为多行代码块
- *
- * 处理顺序（从高优先级到低）：
- *  1. <section data-lang="...">  微信专用代码块（带语言）
- *  2. <pre> 裸标签 / <pre class="...">  通用预格式化文本
- *  3. <code> 内含 <br> 换行（微信把多行代码渲染成 <br> 分隔）
- *  4. 不含换行的单行 <code> 保持不变（行内代码，不处理）
- */
-function normalizeCodeBlocks(html: string): string {
-	// 模式1：微信 <section data-lang="language"> ... </section> 代码块
-	html = html.replace(
-		/<section[^>]+data-lang=["']([^"']*)["'][^>]*>([\s\S]*?)<\/section>/gi,
-		(_, lang, content) => {
-			const code = extractCodeText(content);
-			const langAttr = lang ? ` class="language-${lang}"` : '';
-			return `<pre><code${langAttr}>${code}</code></pre>`;
-		}
-	);
-
-	// 模式2：<pre> 标签（含或不含 class），内部可能有 <code> 或裸文本
-	// 统一规整为 <pre><code class="language-xxx">...</code></pre>
-	html = html.replace(
-		/<pre([^>]*)>([\s\S]*?)<\/pre>/gi,
-		(_, attrs, content) => {
-			// 从已有 class / data-lang 里尝试提取语言
-			const langMatch = attrs.match(/(?:class|data-lang)=["'][^"']*?(?:language-)?([a-zA-Z0-9+#\-]+)["']/i);
-			const lang = langMatch ? langMatch[1] : '';
-			const langAttr = lang ? ` class="language-${lang}"` : '';
-
-			// 如果内部已经有 <code>，直接提取文本；否则视为裸文本
-			const hasCode = /<code[\s>]/i.test(content);
-			const code = hasCode
-				? content.replace(/<\/?code[^>]*>/gi, (m: string) => extractCodeText(m))  // 剥掉 <code> 包装再提取
-				: extractCodeText(content);
-
-			// 重新用 extractCodeText 清理一遍（处理嵌套标签残留）
-			const cleanCode = extractCodeText(hasCode ? content : `<x>${code}</x>`);
-			return `<pre><code${langAttr}>${cleanCode}</code></pre>`;
-		}
-	);
-
-	// 模式3：<code> 内含 <br> 换行的多行代码（微信把换行渲染为 <br>，但未包在 <pre> 里）
-	html = html.replace(
-		/<code([^>]*)>([\s\S]*?<br[\s\S]*?)<\/code>/gi,
-		(_, attrs, content) => {
-			const code = extractCodeText(content);
-			return `<pre><code${attrs}>${code}</code></pre>`;
-		}
-	);
-
-	return html;
-}
-
-/**
  * 预处理 HTML 内容
- * 1. 移除微信封面图区域，避免重复
- * 2. 标准化微信代码块为 <pre><code> 格式
- * 3. 处理懒加载图片的 data-src 属性，将其转换为 src 属性
+ * 1. DOM 级深度清理（方案B核心，使用 linkedom）
+ * 2. 处理懒加载图片的 data-src 属性，将其转换为 src 属性
  */
 export function preprocessHtml(html: string): string {
-	// 移除微信文章封面图区域（避免转换后在 Markdown 开头出现重复图片）
-	// 微信封面图通常在 id="js_cover_area" 的 div 中
-	html = html.replace(/<div[^>]+id=["']js_cover_area["'][^>]*>[\s\S]*?<\/div>/gi, '');
-
-	// 第一步：标准化代码块
-	html = normalizeCodeBlocks(html);
+	// 第一步：DOM 级深度清理（移除标题、作者信息、噪音内容、标准化代码块）
+	html = cleanArticleHtml(html);
 
 	// 第二步：处理懒加载图片
 	return html.replace(/<img\s+([^>]*?)data-src=["']([^"']+)["']([^>]*)>/gi, (match, before, dataSrc, after) => {

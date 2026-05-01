@@ -10,6 +10,7 @@
 		"cf-typegen": "wrangler types"
 	},
 	"dependencies": {
+		"linkedom": "^0.18.12",
 		"marked": "^15.0.0"
 	},
 	"devDependencies": {

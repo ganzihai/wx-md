@@ -8,37 +8,33 @@ import { generateHtmlWrapper } from './template';
 import { replaceImageUrlsSync, uploadImagesToR2Async } from './r2-images';
 
 /**
- * 清理微信文章 Markdown 中的冗余内容
+ * 清理 Markdown 中的冗余内容（轻量兜底）
+ * 大部分噪音已在 HTML 层面通过 linkedom 清理，此处仅做最终微调：
  * 1. 删除开头的 YAML front matter (--- ... ---)
- * 2. 删除标题后的"原创 作者名 作者名 [作者名](javascript:...)"行
- * 3. 删除"在小说阅读器读本章 / 去阅读 / 在小说阅读器中沉浸阅读"三行
+ * 2. 删除正文开头的 Markdown 标题行（兜底，避免与 Hugo front matter title 重复）
+ * 3. 模糊匹配预期标题，删除任何匹配的标题行
  * 4. 删除"预览时标签不可点"及之后所有内容
- * 5. 删除正文开头的 Markdown 标题行（避免与 Hugo front matter title 重复）
  */
 export function cleanMarkdown(content: string, expectedTitle?: string): string {
 	// 1. 删除开头的 YAML front matter
 	content = content.replace(/^---[\s\S]*?---\n*/m, '');
 
-	// 2. 删除"原创 作者 作者 [作者](javascript:...)"这一行
-	content = content.replace(/^原创\s+.+\[.+\]\(javascript:[^\)]*\)\s*\n/m, '');
+	// 2. 删除正文开头的 Markdown 标题行（支持 \r\n，兜底）
+	content = content.replace(/^[\s\n\r]*#{1,6}\s+.+[\r\n]+/, '');
 
-	// 3. 删除小说阅读器三行固定噪音
-	content = content.replace(/在小说阅读器读本章\s*\n\s*去阅读\s*\n\s*在小说阅读器中沉浸阅读\s*\n*/m, '');
-
-	// 4. 从"预览时标签不可点"开始删除到末尾
-	content = content.replace(/预览时标签不可点[\s\S]*$/m, '');
-
-	// 5. 删除正文开头的 Markdown 标题行（1-6 级），避免与 Hugo front matter title 重复
-	// 允许标题前有空行，使用多行模式匹配
-	content = content.replace(/^(\s*\n)*\s*#{1,6}\s+.+\n+/, '');
-
-	// 6. 如果提供了预期标题，删除任何包含该标题的标题行（更精确匹配）
+	// 3. 模糊匹配预期标题（比精确匹配更鲁棒）
 	if (expectedTitle) {
-		const escapedTitle = expectedTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-		// 允许标题前后有空格，匹配 1-6 级标题
-		const titleRegex = new RegExp(`^\\s*#{1,6}\\s*${escapedTitle}\\s*(\\n|$)`, 'm');
-		content = content.replace(titleRegex, '');
+		const normTitle = expectedTitle.replace(/\s+/g, '').substring(0, 30);
+		const titleRegex = /^#{1,6}\s+(.+)[\r\n]+/gm;
+		content = content.replace(titleRegex, (match, captured) => {
+			const normCap = captured.trim().replace(/\s+/g, '').substring(0, 30);
+			if (normCap === normTitle) return '';
+			return match;
+		});
 	}
+
+	// 4. 从"预览时标签不可点"开始删除到末尾（最后兜底）
+	content = content.replace(/预览时标签不可点[\s\S]*$/m, '');
 
 	return content.trim();
 }

@@ -9,6 +9,10 @@ declare namespace Cloudflare {
 		IMAGES_BUCKET: R2Bucket;
 		AI: Ai;
 		R2_PUBLIC_URL: "https://your-r2-domain.example.com";
+		GITHUB_TOKEN: string;
+		HUGO_REPO: string;
+		MEMOS_API_URL: string;
+		MEMOS_API_KEY: string;
 	}
 }
 interface Env extends Cloudflare.Env {}
