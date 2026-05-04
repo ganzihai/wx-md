@@ -7,20 +7,11 @@ import { fetchWithRetry, getArticleTitle, preprocessHtml, sanitizeFilename } fro
 import { generateHtmlWrapper } from './template';
 import { replaceImageUrlsSync, uploadImagesToR2Async } from './r2-images';
 
-/**
- * 清理 Markdown 中的冗余内容（轻量底底）
- */
 export function cleanMarkdown(content: string, expectedTitle?: string): string {
-	// 1. 删除开头的 YAML front matter
 	content = content.replace(/^---[\s\S]*?---\n*/m, '');
-
-	// 2. 删除正文开头的 Markdown 标题行
 	content = content.replace(/^[\s\n\r]*#{1,6}\s+.+[\r\n]+/, '');
-
-	// 3. 删除 AI 幻觉——小说阅读器三行噪音
 	content = content.replace(/在小说阅读器读本章[\s\n\r]*去阅读[\s\n\r]*在小说阅读器中沉浸阅读[\s\n\r]*/m, '');
 
-	// 4. 模糊匹配预期标题
 	if (expectedTitle) {
 		const normTitle = expectedTitle.replace(/\s+/g, '').substring(0, 30);
 		const titleRegex = /^#{1,6}\s+(.+)[\r\n]+/gm;
@@ -31,22 +22,16 @@ export function cleanMarkdown(content: string, expectedTitle?: string): string {
 		});
 	}
 
-	// 5. 从"预览时标签不可点"开始删除到末尾
 	content = content.replace(/预览时标签不可点[\s\S]*$/m, '');
-
 	return content.trim();
 }
 
-/**
- * 调用 Gemini 对 Markdown 进行二次清洗和标题提取
- * 返回 { title, content }
- */
 async function processWithGemini(
 	rawMarkdown: string,
 	fallbackTitle: string,
 	geminiApiKey: string
 ): Promise<{ title: string; content: string }> {
-	const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${geminiApiKey}`;
+	const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`;
 
 	const promptText = `你是一个专业的文字编辑与 Markdown 排版专家。请处理以下来自微信公众号的 Markdown 文本：
 
@@ -91,9 +76,6 @@ ${rawMarkdown}
 	throw new Error('Gemini API 重试 3 次后仍失败');
 }
 
-/**
- * 处理网页转换为 Markdown 的核心逻辑
- */
 export async function convertWebpageToMarkdown(
 	url: string,
 	env: Env,
@@ -130,9 +112,6 @@ export async function convertWebpageToMarkdown(
 	}
 }
 
-/**
- * 核心转换函数，返回 { title, markdown } 供推送模块复用
- */
 export async function convertToMarkdownContent(
 	url: string,
 	env: Env,
@@ -148,11 +127,8 @@ export async function convertToMarkdownContent(
 
 	const htmlContent = await articleResponse.text();
 	const processedHtml = preprocessHtml(htmlContent);
-
-	// 从 HTML meta 提取原始标题（用于 fallback）
 	const htmlTitle = getArticleTitle(processedHtml, fallbackTitle);
 
-	// 用 Workers AI 将 HTML 转为初步 Markdown
 	console.log('开始转换为 Markdown');
 	const mdResult = await env.AI.toMarkdown([
 		{
@@ -171,13 +147,9 @@ export async function convertToMarkdownContent(
 	}
 	let markdown = result.data;
 
-	// 同步替换图片链接为 wsrv.nl 代理链接
 	markdown = replaceImageUrlsSync(processedHtml, markdown, env);
-
-	// 异步上传图片（当前为空操作）
 	ctx.waitUntil(uploadImagesToR2Async(processedHtml, markdown, env));
 
-	// 如果配置了 Gemini API Key，进行二次清洗
 	if (env.GEMINI_API_KEY) {
 		console.log('开始 Gemini 二次清洗');
 		try {
@@ -187,21 +159,16 @@ export async function convertToMarkdownContent(
 				markdown: geminiResult.content,
 			};
 		} catch (e) {
-			// Gemini 失败时降级到正则清洗结果
 			console.error('Gemini 清洗失败，降级到正则清洗:', e);
 			markdown = cleanMarkdown(markdown, htmlTitle);
 			return { title: htmlTitle, markdown };
 		}
 	}
 
-	// 没有 Gemini Key 则用原有正则清洗
 	markdown = cleanMarkdown(markdown, htmlTitle);
 	return { title: htmlTitle, markdown };
 }
 
-/**
- * 处理通用网页转 Markdown 请求
- */
 export async function handleGenericWebpage(
 	url: URL,
 	env: Env,

@@ -3,9 +3,6 @@
  * 使用 Jina Reader 抓取字幕/描述，再由 Gemini 总结为结构化 Markdown 笔记
  */
 
-/**
- * 通过 Jina Reader 抓取 YouTube 页面内容
- */
 async function fetchWithJina(url: string, jinaApiKey?: string): Promise<string> {
 	const jinaUrl = `https://r.jina.ai/${url}`;
 	const headers: Record<string, string> = { 'Accept': 'text/markdown' };
@@ -25,14 +22,11 @@ async function fetchWithJina(url: string, jinaApiKey?: string): Promise<string> 
 	throw new Error('Jina Reader 重试 3 次后仍失败');
 }
 
-/**
- * 调用 Gemini 对 YouTube 内容进行知识萃取
- */
 async function summarizeWithGemini(
 	rawContent: string,
 	geminiApiKey: string
 ): Promise<{ title: string; content: string }> {
-	const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${geminiApiKey}`;
+	const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`;
 
 	const promptText = `你是一个知识萃取专家。以下是一段 YouTube 视频的字幕或网页抓取文本：
 
@@ -70,10 +64,6 @@ ${rawContent}
 	throw new Error('Gemini API 重试 3 次后仍失败');
 }
 
-/**
- * 处理 YouTube 链接的完整流程：Jina 抓取 → Gemini 总结
- * 返回 { title, markdown }
- */
 export async function convertYoutubeToMarkdown(
 	youtubeUrl: string,
 	env: Env
