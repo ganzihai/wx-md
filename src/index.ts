@@ -12,6 +12,7 @@
  * - POST /push/memos     自动识别 URL 类型推送到 Memos
  *   YouTube 地址 → Jina + Gemini
  *   其他地址 → 微信 AI 流程
+ *   任何流程失败 → 居底把原始链接存入 Memos
  */
 
 import INDEX_HTML from '../index.html';
@@ -44,6 +45,19 @@ async function resolveUrl(request: Request, url: URL): Promise<string> {
 		}
 	}
 	return '';
+}
+
+/**
+ * 居底方案：把原始链接存入 Memos
+ */
+async function fallbackToMemos(sourceUrl: string, reason: string, env: Env): Promise<void> {
+	try {
+		const content = `⚠️ 自动处理失败，请手动处理：\n\n${sourceUrl}\n\n>失败原因: ${reason}`;
+		await postToMemos(content, env);
+		console.log(`[fallback] 居底链接已存入 Memos: ${sourceUrl}`);
+	} catch (e) {
+		console.error('[fallback] 居底存入 Memos 也失败:', e);
+	}
 }
 
 async function handlePush(
@@ -91,9 +105,20 @@ async function handlePush(
 		}
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
-		console.error(`[push/${target}] 处理失败:`, error);
+		console.error(`[push/${target}] 处理失败，居底存入 Memos:`, error);
+
+		// 居底：将原始链接存入 Memos
+		if (env.MEMOS_API_URL && env.MEMOS_API_KEY) {
+			ctx.waitUntil(fallbackToMemos(sourceUrl, msg, env));
+		}
+
 		return new Response(
-			JSON.stringify({ success: false, error: msg }),
+			JSON.stringify({
+				success: false,
+				fallback: true,
+				message: '处理失败，原始链接已存入 Memos',
+				error: msg,
+			}),
 			{ status: 500, headers: { 'Content-Type': 'application/json' } }
 		);
 	}
