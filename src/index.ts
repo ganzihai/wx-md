@@ -2,16 +2,16 @@
  * 微信公众号文章转 Markdown 工具 - Worker 入口
  *
  * 路由说明:
- * - /                    首页
- * - /health, /healthz    健康检查
- * - /s/{article_id}      微信文章转 Markdown
- * - /html/s/{article_id} 微信文章 HTML 预览
- * - /md?url=...          通用网页转 Markdown
- * - /html/md?url=...     通用网页 HTML 预览
- * - POST /push/hugo      微信文章转换后推送到 Hugo
- * - POST /push/memos     微信文章转换后推送到 Memos
- * - POST /push/hugo/youtube   YouTube 视频总结推送到 Hugo
- * - POST /push/memos/youtube  YouTube 视频总结推送到 Memos
+ * - /                         首页
+ * - /health, /healthz          健康检查
+ * - /s/{article_id}            微信文章转 Markdown
+ * - /html/s/{article_id}       微信文章 HTML 预览
+ * - /md?url=...                通用网页转 Markdown
+ * - /html/md?url=...           通用网页 HTML 预览
+ * - POST /push/hugo            微信文章转换后推送到 Hugo
+ * - POST /push/memos           微信文章转换后推送到 Memos
+ * - POST /push/hugo/youtube    YouTube 视频总结推送到 Hugo
+ * - POST /push/memos/youtube   YouTube 视频总结推送到 Memos
  */
 
 import INDEX_HTML from '../index.html';
@@ -21,7 +21,11 @@ import { convertYoutubeToMarkdown } from './youtube';
 
 const WECHAT_URL_PREFIX = 'https://mp.weixin.qq.com/';
 
-async function resolveWechatUrl(request: Request, url: URL): Promise<string> {
+/**
+ * 从请求中解析 URL
+ * 支持 query 参数 ?url=... 或 POST body（JSON / 纯文本）
+ */
+async function resolveUrl(request: Request, url: URL): Promise<string> {
 	const queryUrl = url.searchParams.get('url');
 	if (queryUrl) return decodeURIComponent(queryUrl);
 
@@ -42,27 +46,31 @@ async function resolveWechatUrl(request: Request, url: URL): Promise<string> {
 	return '';
 }
 
+type Converter = (url: string) => Promise<{ title: string; markdown: string }>;
+
+/**
+ * 通用推送处理器
+ * converter 决定如何把 URL 转为 { title, markdown }
+ */
 async function handlePush(
 	request: Request,
-	url: URL,
+	urlObj: URL,
+	target: 'hugo' | 'memos',
 	env: Env,
-	ctx: ExecutionContext,
-	target: 'hugo' | 'memos'
+	converter: Converter
 ): Promise<Response> {
-	const wechatUrl = await resolveWechatUrl(request, url);
-	if (!wechatUrl) {
-		return new Response(JSON.stringify({ success: false, error: '缺少微信文章 URL，请通过 ?url= 参数或 POST body 提供' }), {
+	const sourceUrl = await resolveUrl(request, urlObj);
+
+	if (!sourceUrl) {
+		return new Response(JSON.stringify({ success: false, error: '缺少 URL，请通过 ?url= 参数或 POST body 提供' }), {
 			status: 400,
 			headers: { 'Content-Type': 'application/json' },
 		});
 	}
 
 	try {
-		const match = wechatUrl.match(/\/s\/([A-Za-z0-9_-]+)/);
-		const fallbackId = match ? match[1] : new URL(wechatUrl).hostname;
-		console.log(`[push/${target}] 开始转换: ${wechatUrl}`);
-
-		const { title, markdown } = await convertToMarkdownContent(wechatUrl, env, ctx, fallbackId);
+		console.log(`[push/${target}] 开始处理: ${sourceUrl}`);
+		const { title, markdown } = await converter(sourceUrl);
 
 		if (target === 'hugo') {
 			const result = await postToHugo(title, markdown, env);
@@ -80,67 +88,6 @@ async function handlePush(
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
 		console.error(`[push/${target}] 处理失败:`, error);
-		return new Response(
-			JSON.stringify({ success: false, error: msg }),
-			{ status: 500, headers: { 'Content-Type': 'application/json' } }
-		);
-	}
-}
-
-async function handleYoutubePush(
-	request: Request,
-	target: 'hugo' | 'memos',
-	env: Env
-): Promise<Response> {
-	try {
-		const contentType = request.headers.get('Content-Type') || '';
-		let youtubeUrl = '';
-
-		if (contentType.includes('application/json')) {
-			try {
-				const body = await request.json() as Record<string, string>;
-				youtubeUrl = body.url || body.content || body.text || body.link || '';
-			} catch { /* 忽略 */ }
-		} else {
-			youtubeUrl = (await request.text()).trim();
-		}
-
-		youtubeUrl = youtubeUrl.trim().replace(/^"|"$/g, '');
-
-		if (!youtubeUrl) {
-			return new Response(JSON.stringify({ success: false, error: '缺少 YouTube 链接' }), {
-				status: 400,
-				headers: { 'Content-Type': 'application/json' },
-			});
-		}
-
-		const isYoutube = youtubeUrl.includes('youtube.com') || youtubeUrl.includes('youtu.be');
-		if (!isYoutube) {
-			return new Response(JSON.stringify({ success: false, error: '请提供有效的 YouTube 链接' }), {
-				status: 400,
-				headers: { 'Content-Type': 'application/json' },
-			});
-		}
-
-		console.log(`[push/${target}/youtube] 开始处理: ${youtubeUrl}`);
-		const { title, markdown } = await convertYoutubeToMarkdown(youtubeUrl, env);
-
-		if (target === 'hugo') {
-			const result = await postToHugo(title, markdown, env);
-			return new Response(
-				JSON.stringify({ success: true, target: 'hugo', title, path: result.path, url: result.url }),
-				{ headers: { 'Content-Type': 'application/json' } }
-			);
-		} else {
-			const result = await postToMemos(markdown, env);
-			return new Response(
-				JSON.stringify({ success: true, target: 'memos', title, id: result.id }),
-				{ headers: { 'Content-Type': 'application/json' } }
-			);
-		}
-	} catch (error) {
-		const msg = error instanceof Error ? error.message : String(error);
-		console.error(`[push/${target}/youtube] 处理失败:`, error);
 		return new Response(
 			JSON.stringify({ success: false, error: msg }),
 			{ status: 500, headers: { 'Content-Type': 'application/json' } }
@@ -166,20 +113,30 @@ export default {
 				return new Response(INDEX_HTML, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 			}
 
-			// YouTube 推送路由（顺序要在微信推送路由前判断）
+			// YouTube 推送路由
 			if (path === '/push/hugo/youtube') {
-				return await handleYoutubePush(request, 'hugo', env);
+				return handlePush(request, url, 'hugo', env,
+					(u) => convertYoutubeToMarkdown(u, env));
 			}
 			if (path === '/push/memos/youtube') {
-				return await handleYoutubePush(request, 'memos', env);
+				return handlePush(request, url, 'memos', env,
+					(u) => convertYoutubeToMarkdown(u, env));
 			}
 
 			// 微信推送路由
 			if (path === '/push/hugo') {
-				return await handlePush(request, url, env, ctx, 'hugo');
+				return handlePush(request, url, 'hugo', env, (u) => {
+					const match = u.match(/\/s\/([A-Za-z0-9_-]+)/);
+					const fallbackId = match ? match[1] : new URL(u).hostname;
+					return convertToMarkdownContent(u, env, ctx, fallbackId);
+				});
 			}
 			if (path === '/push/memos') {
-				return await handlePush(request, url, env, ctx, 'memos');
+				return handlePush(request, url, 'memos', env, (u) => {
+					const match = u.match(/\/s\/([A-Za-z0-9_-]+)/);
+					const fallbackId = match ? match[1] : new URL(u).hostname;
+					return convertToMarkdownContent(u, env, ctx, fallbackId);
+				});
 			}
 
 			if (path === '/html/md') {
