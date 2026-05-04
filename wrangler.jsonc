@@ -20,5 +20,6 @@
 		"HUGO_REPO": "ganzihai/blog",
 		// Memos 配置（API Key 通过 wrangler secret put MEMOS_API_KEY 设置）
 		"MEMOS_API_URL": "https://n.ganzi.fun"
+		// GEMINI_API_KEY 通过 wrangler secret put GEMINI_API_KEY 设置
 	}
 }

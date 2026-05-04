@@ -3,9 +3,6 @@
  * 将转换后的 Markdown 内容推送到 Hugo 或 Memos
  */
 
-/**
- * 将字符串编码为 base64（支持中文/UTF-8）
- */
 function toBase64(str: string): string {
 	const bytes = new TextEncoder().encode(str);
 	let binary = '';
@@ -15,16 +12,11 @@ function toBase64(str: string): string {
 	return btoa(binary);
 }
 
-/**
- * 获取北京时间各字段
- * 北京时间 = UTC+8
- */
 function getBeijingTimeParts(now: Date): {
-	dateStr: string;       // 2026-04-21
-	timeStr: string;       // 1338
-	dateTimeISO: string;   // 2026-04-21T13:38:00+08:00
+	dateStr: string;
+	timeStr: string;
+	dateTimeISO: string;
 } {
-	// UTC 毫秒 + 8小时偏移
 	const bjOffset = 8 * 60 * 60 * 1000;
 	const bjTime = new Date(now.getTime() + bjOffset);
 
@@ -43,9 +35,9 @@ function getBeijingTimeParts(now: Date): {
 }
 
 /**
- * 推送内容到 Hugo（通过 GitHub API 提交 .md 文件到 blog 仓库）
- * 文件命名规则：YYYY-MM-DD-HHmm.md（北京时间，精确到分钟）
- * 例如：2026-04-21-1338.md
+ * 推送内容到 Hugo
+ * 文件命名规则：YYYY-MM-DD-HHmm.md（北京时间）
+ * 推送路径：content/post/
  */
 export async function postToHugo(
 	title: string,
@@ -71,11 +63,10 @@ export async function postToHugo(
 		'Content-Type': 'application/json',
 	};
 
-	// 拼接 Hugo frontmatter
 	const safeTitle = title.replace(/"/g, '\\"');
 	const frontmatter = [
 		'---',
-		`title: ${safeTitle}`,
+		`title: "${safeTitle}"`,
 		'author: 杆子',
 		'type: post',
 		`date: ${dateTimeISO}`,
@@ -91,7 +82,6 @@ export async function postToHugo(
 
 	const fileContent = frontmatter + markdownContent;
 
-	// 提交文件到 GitHub
 	const uploadResp = await fetch(`${apiBase}/contents/${filepath}`, {
 		method: 'PUT',
 		headers: githubHeaders,
@@ -114,7 +104,7 @@ export async function postToHugo(
 }
 
 /**
- * 推送 Markdown 内容到 Memos（原生支持 Markdown，无需转换）
+ * 推送 Markdown 内容到 Memos
  */
 export async function postToMemos(
 	markdownContent: string,
@@ -125,7 +115,6 @@ export async function postToMemos(
 	}
 
 	const endpoint = `${env.MEMOS_API_URL}/api/memos`;
-
 	console.log(`推送到 Memos: ${endpoint}`);
 
 	const response = await fetch(endpoint, {
@@ -137,7 +126,6 @@ export async function postToMemos(
 		body: JSON.stringify({
 			content: markdownContent,
 			is_public: 0,
-			tags: ['n8n', '自动推送'],
 		}),
 	});
 
