@@ -2,16 +2,16 @@
  * 微信公众号文章转 Markdown 工具 - Worker 入口
  *
  * 路由说明:
- * - /                         首页
- * - /health, /healthz          健康检查
- * - /s/{article_id}            微信文章转 Markdown
- * - /html/s/{article_id}       微信文章 HTML 预览
- * - /md?url=...                通用网页转 Markdown
- * - /html/md?url=...           通用网页 HTML 预览
- * - POST /push/hugo            微信文章转换后推送到 Hugo
- * - POST /push/memos           微信文章转换后推送到 Memos
- * - POST /push/hugo/youtube    YouTube 视频总结推送到 Hugo
- * - POST /push/memos/youtube   YouTube 视频总结推送到 Memos
+ * - /                    首页
+ * - /health, /healthz    健康检查
+ * - /s/{article_id}      微信文章转 Markdown
+ * - /html/s/{article_id} 微信文章 HTML 预览
+ * - /md?url=...          通用网页转 Markdown
+ * - /html/md?url=...     通用网页 HTML 预览
+ * - POST /push/hugo      自动识别 URL 类型推送到 Hugo
+ * - POST /push/memos     自动识别 URL 类型推送到 Memos
+ *   YouTube 地址 → Jina + Gemini
+ *   其他地址 → 微信 AI 流程
  */
 
 import INDEX_HTML from '../index.html';
@@ -21,10 +21,10 @@ import { convertYoutubeToMarkdown } from './youtube';
 
 const WECHAT_URL_PREFIX = 'https://mp.weixin.qq.com/';
 
-/**
- * 从请求中解析 URL
- * 支持 query 参数 ?url=... 或 POST body（JSON / 纯文本）
- */
+function isYoutubeUrl(url: string): boolean {
+	return url.includes('youtube.com') || url.includes('youtu.be');
+}
+
 async function resolveUrl(request: Request, url: URL): Promise<string> {
 	const queryUrl = url.searchParams.get('url');
 	if (queryUrl) return decodeURIComponent(queryUrl);
@@ -46,18 +46,12 @@ async function resolveUrl(request: Request, url: URL): Promise<string> {
 	return '';
 }
 
-type Converter = (url: string) => Promise<{ title: string; markdown: string }>;
-
-/**
- * 通用推送处理器
- * converter 决定如何把 URL 转为 { title, markdown }
- */
 async function handlePush(
 	request: Request,
 	urlObj: URL,
 	target: 'hugo' | 'memos',
 	env: Env,
-	converter: Converter
+	ctx: ExecutionContext
 ): Promise<Response> {
 	const sourceUrl = await resolveUrl(request, urlObj);
 
@@ -69,8 +63,18 @@ async function handlePush(
 	}
 
 	try {
-		console.log(`[push/${target}] 开始处理: ${sourceUrl}`);
-		const { title, markdown } = await converter(sourceUrl);
+		let title: string;
+		let markdown: string;
+
+		if (isYoutubeUrl(sourceUrl)) {
+			console.log(`[push/${target}] YouTube 流程: ${sourceUrl}`);
+			({ title, markdown } = await convertYoutubeToMarkdown(sourceUrl, env));
+		} else {
+			console.log(`[push/${target}] 微信流程: ${sourceUrl}`);
+			const match = sourceUrl.match(/\/s\/([A-Za-z0-9_-]+)/);
+			const fallbackId = match ? match[1] : new URL(sourceUrl).hostname;
+			({ title, markdown } = await convertToMarkdownContent(sourceUrl, env, ctx, fallbackId));
+		}
 
 		if (target === 'hugo') {
 			const result = await postToHugo(title, markdown, env);
@@ -103,7 +107,7 @@ export default {
 			console.log(`处理请求路径: ${path}`);
 
 			if (path === '/health' || path === '/healthz') {
-				return new Response(JSON.stringify({ status: 'ok', version: '2.1.0', timestamp: new Date().toISOString() }), {
+				return new Response(JSON.stringify({ status: 'ok', version: '2.2.0', timestamp: new Date().toISOString() }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' },
 				});
@@ -113,30 +117,11 @@ export default {
 				return new Response(INDEX_HTML, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 			}
 
-			// YouTube 推送路由
-			if (path === '/push/hugo/youtube') {
-				return handlePush(request, url, 'hugo', env,
-					(u) => convertYoutubeToMarkdown(u, env));
-			}
-			if (path === '/push/memos/youtube') {
-				return handlePush(request, url, 'memos', env,
-					(u) => convertYoutubeToMarkdown(u, env));
-			}
-
-			// 微信推送路由
 			if (path === '/push/hugo') {
-				return handlePush(request, url, 'hugo', env, (u) => {
-					const match = u.match(/\/s\/([A-Za-z0-9_-]+)/);
-					const fallbackId = match ? match[1] : new URL(u).hostname;
-					return convertToMarkdownContent(u, env, ctx, fallbackId);
-				});
+				return handlePush(request, url, 'hugo', env, ctx);
 			}
 			if (path === '/push/memos') {
-				return handlePush(request, url, 'memos', env, (u) => {
-					const match = u.match(/\/s\/([A-Za-z0-9_-]+)/);
-					const fallbackId = match ? match[1] : new URL(u).hostname;
-					return convertToMarkdownContent(u, env, ctx, fallbackId);
-				});
+				return handlePush(request, url, 'memos', env, ctx);
 			}
 
 			if (path === '/html/md') {
