@@ -8,23 +8,15 @@
  * - /html/s/{article_id} 微信文章 HTML 预览
  * - /md?url=...          通用网页转 Markdown
  * - /html/md?url=...     通用网页 HTML 预览
- * - POST /push/hugo      自动识别 URL 类型推送到 Hugo
- * - POST /push/memos     自动识别 URL 类型推送到 Memos
- *   YouTube 地址 → Jina + Gemini
- *   其他地址 → 微信 AI 流程
- *   任何流程失败 → 居底把原始链接存入 Memos
+ * - POST /push/hugo      将任务入队，立即返回 202
+ * - POST /push/memos     将任务入队，立即返回 202
  */
 
 import INDEX_HTML from '../index.html';
-import { convertWebpageToMarkdown, convertToMarkdownContent, handleGenericWebpage } from './converter';
-import { postToHugo, postToMemos } from './publisher';
-import { convertYoutubeToMarkdown } from './youtube';
+import { convertWebpageToMarkdown, handleGenericWebpage } from './converter';
+import type { PushMessage } from './consumer';
 
 const WECHAT_URL_PREFIX = 'https://mp.weixin.qq.com/';
-
-function isYoutubeUrl(url: string): boolean {
-	return url.includes('youtube.com') || url.includes('youtu.be');
-}
 
 async function resolveUrl(request: Request, url: URL): Promise<string> {
 	const queryUrl = url.searchParams.get('url');
@@ -47,83 +39,6 @@ async function resolveUrl(request: Request, url: URL): Promise<string> {
 	return '';
 }
 
-/**
- * 居底方案：把原始链接存入 Memos
- */
-async function fallbackToMemos(sourceUrl: string, reason: string, env: Env): Promise<void> {
-	try {
-		const content = `⚠️ 自动处理失败，请手动处理：\n\n${sourceUrl}\n\n>失败原因: ${reason}`;
-		await postToMemos(content, env);
-		console.log(`[fallback] 居底链接已存入 Memos: ${sourceUrl}`);
-	} catch (e) {
-		console.error('[fallback] 居底存入 Memos 也失败:', e);
-	}
-}
-
-async function handlePush(
-	request: Request,
-	urlObj: URL,
-	target: 'hugo' | 'memos',
-	env: Env,
-	ctx: ExecutionContext
-): Promise<Response> {
-	const sourceUrl = await resolveUrl(request, urlObj);
-
-	if (!sourceUrl) {
-		return new Response(JSON.stringify({ success: false, error: '缺少 URL，请通过 ?url= 参数或 POST body 提供' }), {
-			status: 400,
-			headers: { 'Content-Type': 'application/json' },
-		});
-	}
-
-	try {
-		let title: string;
-		let markdown: string;
-
-		if (isYoutubeUrl(sourceUrl)) {
-			console.log(`[push/${target}] YouTube 流程: ${sourceUrl}`);
-			({ title, markdown } = await convertYoutubeToMarkdown(sourceUrl, env));
-		} else {
-			console.log(`[push/${target}] 微信流程: ${sourceUrl}`);
-			const match = sourceUrl.match(/\/s\/([A-Za-z0-9_-]+)/);
-			const fallbackId = match ? match[1] : new URL(sourceUrl).hostname;
-			({ title, markdown } = await convertToMarkdownContent(sourceUrl, env, ctx, fallbackId));
-		}
-
-		if (target === 'hugo') {
-			const result = await postToHugo(title, markdown, env);
-			return new Response(
-				JSON.stringify({ success: true, target: 'hugo', title, path: result.path, url: result.url }),
-				{ headers: { 'Content-Type': 'application/json' } }
-			);
-		} else {
-			const result = await postToMemos(markdown, env);
-			return new Response(
-				JSON.stringify({ success: true, target: 'memos', title, id: result.id }),
-				{ headers: { 'Content-Type': 'application/json' } }
-			);
-		}
-	} catch (error) {
-		const msg = error instanceof Error ? error.message : String(error);
-		console.error(`[push/${target}] 处理失败，居底存入 Memos:`, error);
-
-		// 居底：将原始链接存入 Memos
-		if (env.MEMOS_API_URL && env.MEMOS_API_KEY) {
-			ctx.waitUntil(fallbackToMemos(sourceUrl, msg, env));
-		}
-
-		return new Response(
-			JSON.stringify({
-				success: false,
-				fallback: true,
-				message: '处理失败，原始链接已存入 Memos',
-				error: msg,
-			}),
-			{ status: 500, headers: { 'Content-Type': 'application/json' } }
-		);
-	}
-}
-
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		try {
@@ -132,7 +47,7 @@ export default {
 			console.log(`处理请求路径: ${path}`);
 
 			if (path === '/health' || path === '/healthz') {
-				return new Response(JSON.stringify({ status: 'ok', version: '2.2.0', timestamp: new Date().toISOString() }), {
+				return new Response(JSON.stringify({ status: 'ok', version: '3.0.0', timestamp: new Date().toISOString() }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' },
 				});
@@ -142,11 +57,26 @@ export default {
 				return new Response(INDEX_HTML, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 			}
 
-			if (path === '/push/hugo') {
-				return handlePush(request, url, 'hugo', env, ctx);
-			}
-			if (path === '/push/memos') {
-				return handlePush(request, url, 'memos', env, ctx);
+			// 推送路由：将任务入队，立即返回
+			if (path === '/push/hugo' || path === '/push/memos') {
+				const target = path === '/push/hugo' ? 'hugo' : 'memos';
+				const sourceUrl = await resolveUrl(request, url);
+
+				if (!sourceUrl) {
+					return new Response(JSON.stringify({ success: false, error: '缺少 URL，请通过 ?url= 参数或 POST body 提供' }), {
+						status: 400,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				}
+
+				const message: PushMessage = { url: sourceUrl, target };
+				await env.PUSH_QUEUE.send(message);
+
+				console.log(`[push/${target}] 入队成功: ${sourceUrl}`);
+				return new Response(
+					JSON.stringify({ success: true, queued: true, target, url: sourceUrl }),
+					{ status: 202, headers: { 'Content-Type': 'application/json' } }
+				);
 			}
 
 			if (path === '/html/md') {

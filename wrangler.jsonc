@@ -13,6 +13,21 @@
 	"ai": {
 		"binding": "AI"
 	},
+	"queues": {
+		"producers": [
+			{
+				"queue": "push-queue",
+				"binding": "PUSH_QUEUE"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "push-queue",
+				"max_batch_size": 1,
+				"max_batch_timeout": 5
+			}
+		]
+	},
 	"vars": {
 		// R2 公开访问域名
 		"R2_PUBLIC_URL": "https://wc-md.ganzi.fun",

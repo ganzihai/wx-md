@@ -15,6 +15,7 @@ declare namespace Cloudflare {
 		MEMOS_API_KEY: string;
 		GEMINI_API_KEY: string;
 		JINA_API_KEY: string;
+		PUSH_QUEUE: Queue;
 	}
 }
 interface Env extends Cloudflare.Env {}
