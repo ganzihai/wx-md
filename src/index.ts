@@ -13,10 +13,20 @@
  */
 
 import INDEX_HTML from '../index.html';
-import { convertWebpageToMarkdown, handleGenericWebpage } from './converter';
-import type { PushMessage } from './consumer';
+import { convertWebpageToMarkdown, handleGenericWebpage, convertToMarkdownContent } from './converter';
+import { postToHugo, postToMemos } from './publisher';
+import { convertYoutubeToMarkdown } from './youtube';
 
 const WECHAT_URL_PREFIX = 'https://mp.weixin.qq.com/';
+
+export interface PushMessage {
+	url: string;
+	target: 'hugo' | 'memos';
+}
+
+function isYoutubeUrl(url: string): boolean {
+	return url.includes('youtube.com') || url.includes('youtu.be');
+}
 
 async function resolveUrl(request: Request, url: URL): Promise<string> {
 	const queryUrl = url.searchParams.get('url');
@@ -37,6 +47,16 @@ async function resolveUrl(request: Request, url: URL): Promise<string> {
 		}
 	}
 	return '';
+}
+
+async function fallbackToMemos(sourceUrl: string, reason: string, env: Env): Promise<void> {
+	try {
+		const content = `⚠️ 自动处理失败，请手动处理：\n\n${sourceUrl}\n\n>失败原因: ${reason}`;
+		await postToMemos(content, env);
+		console.log(`[fallback] 居底链接已存入 Memos: ${sourceUrl}`);
+	} catch (e) {
+		console.error('[fallback] 居底存入 Memos 也失败:', e);
+	}
 }
 
 export default {
@@ -122,6 +142,42 @@ export default {
 			return new Response(`处理请求时发生错误: ${errorMessage}`, {
 				status: 500, headers: { 'Content-Type': 'text/plain; charset=utf-8' },
 			});
+		}
+	},
+
+	async queue(batch: MessageBatch<PushMessage>, env: Env, ctx: ExecutionContext): Promise<void> {
+		for (const message of batch.messages) {
+			const { url: sourceUrl, target } = message.body;
+			try {
+				let title: string;
+				let markdown: string;
+
+				if (isYoutubeUrl(sourceUrl)) {
+					console.log(`[queue/${target}] YouTube 流程: ${sourceUrl}`);
+					({ title, markdown } = await convertYoutubeToMarkdown(sourceUrl, env));
+				} else {
+					console.log(`[queue/${target}] 微信流程: ${sourceUrl}`);
+					const match = sourceUrl.match(/\/s\/([A-Za-z0-9_-]+)/);
+					const fallbackId = match ? match[1] : new URL(sourceUrl).hostname;
+					({ title, markdown } = await convertToMarkdownContent(sourceUrl, env, ctx, fallbackId));
+				}
+
+				if (target === 'hugo') {
+					const result = await postToHugo(title, markdown, env);
+					console.log(`[queue/hugo] 推送成功: ${result.path}`);
+				} else {
+					const result = await postToMemos(markdown, env);
+					console.log(`[queue/memos] 推送成功, id: ${result.id}`);
+				}
+				message.ack();
+			} catch (error) {
+				const errMsg = error instanceof Error ? error.message : String(error);
+				console.error(`[queue/${target}] 处理失败，居底存入 Memos:`, error);
+				if (env.MEMOS_API_URL && env.MEMOS_API_KEY) {
+					await fallbackToMemos(sourceUrl, errMsg, env);
+				}
+				message.ack(); // 避免无限重试
+			}
 		}
 	},
 } satisfies ExportedHandler<Env>;
